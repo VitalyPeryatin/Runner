@@ -39,6 +39,7 @@ captures/
 # IntelliJ
 *.iml
 .idea/
+!.idea/dictionaries
 
 # Keystore files
 *.jks
