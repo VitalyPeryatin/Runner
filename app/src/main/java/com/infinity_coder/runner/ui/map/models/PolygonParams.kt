@@ -9,5 +9,7 @@ data class PolygonParams(
     val height: Double,
     var polygonOptions: PolygonOptions = PolygonOptions(),
     var isSelected: Boolean = false,
-    var isCapturing: Boolean = false
+    var isCapturing: Boolean = false,
+    var isCaptured: Boolean = false,
+    var minSideLength: Float = Float.MAX_VALUE
 )

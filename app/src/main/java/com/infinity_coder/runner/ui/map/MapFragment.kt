@@ -122,9 +122,7 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
             map.setMapStyle(
                 MapStyleOptions.loadRawResourceStyle(context, R.raw.map_style)
             )
-            Log.d("mLogStyle", "style: success")
         } catch (e: Resources.NotFoundException) {
-            Log.d("mLogStyle", "style: error")
         }
     }
 

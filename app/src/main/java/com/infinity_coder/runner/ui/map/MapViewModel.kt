@@ -12,10 +12,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import java.util.*
 import kotlin.Comparator
-import kotlin.collections.HashMap
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.pow
+import kotlin.math.*
 
 class MapViewModel: ViewModel() {
 
@@ -26,11 +23,16 @@ class MapViewModel: ViewModel() {
         private val SOLID_STROKE_PATTERN = null
         private val DASHED_STROKE_PATTERN = listOf(Dash(25f), Gap(50f))
 
-        private val STANDARD_POLYGON_OPTIONS = PolygonOptions().apply {
+        private val STANDARD_EVEN_POLYGON_OPTIONS = PolygonOptions().apply {
             fillColor(Color.TRANSPARENT)
             strokeColor(Color.parseColor("#B1BEC5"))
             strokePattern(DASHED_STROKE_PATTERN)
             strokeWidth(4f)
+            zIndex(0f)
+        }
+        private val STANDARD_ODD_POLYGON_OPTIONS = PolygonOptions().apply {
+            fillColor(Color.TRANSPARENT)
+            strokeWidth(0f)
             zIndex(0f)
         }
         private val CAPTURED_POLYGON_OPTIONS = PolygonOptions().apply {
@@ -62,13 +64,15 @@ class MapViewModel: ViewModel() {
     private val _myLocationPathFlow = MutableSharedFlow<LatLng>()
     val myLocationPathFlow: SharedFlow<LatLng> = _myLocationPathFlow
 
+    private var capturingUserPathPoints: MutableList<LatLng> = mutableListOf()
+
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, exception ->
         Log.e("CoroutineException", "$exception")
     }
     private val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + coroutineExceptionHandler)
     private var drawDistrictsJob: Job? = null
     private val polygonParams: HashSet<LatLng> = hashSetOf()
-    private val polygonParamsMap: HashMap<Pair<Double, Double>, PolygonParams> = hashMapOf()
+    private val polygonParamsMap: HashMap<LatLng, PolygonParams> = hashMapOf()
     private var capturingPolygonParams: PolygonParams? = null
 
     private var lastLocation: Location? = null
@@ -84,7 +88,7 @@ class MapViewModel: ViewModel() {
     fun onPolygonClicked(polygon: Polygon) = viewModelScope.launch {
 
         val topLeftPoint = polygon.points.sortedWith(providePolygonPointsComparator()).first()
-        val polygonParam = polygonParamsMap[Pair(topLeftPoint.latitude, topLeftPoint.longitude)]
+        val polygonParam = polygonParamsMap[topLeftPoint]
 
         if (polygonParam != null) {
             polygonParam.isSelected = !polygonParam.isSelected
@@ -96,7 +100,7 @@ class MapViewModel: ViewModel() {
                     polygonParam.polygonOptions = CAPTURING_POLYGON_OPTIONS
                 }
                 !polygonParam.isSelected && !polygonParam.isCapturing -> {
-                    polygonParam.polygonOptions = STANDARD_POLYGON_OPTIONS
+                    polygonParam.polygonOptions = getStandardPolygonOptions(topLeftPoint)
                 }
             }
             _polygonParamsFlow.emit(polygonParam)
@@ -130,7 +134,7 @@ class MapViewModel: ViewModel() {
         val minLatitude = min(topVisiblePoint, bottomVisiblePoint) - POLYGON_HEIGHT
         val maxLatitude = max(topVisiblePoint, bottomVisiblePoint) + POLYGON_HEIGHT
 
-        val polygonsForDrawing = mutableListOf<PolygonParams>()
+        val polygonsForDrawing: LinkedList<PolygonParams> = LinkedList()
         for (longitude in minLongitude..maxLongitude step POLYGON_WIDTH) {
             for (latitude in minLatitude..maxLatitude step POLYGON_HEIGHT) {
 
@@ -138,43 +142,79 @@ class MapViewModel: ViewModel() {
 
                 val polygonParam = PolygonParams(
                     topLeftLatLng = LatLng(
-                        latitude.round(decimals = widthNumberAfterComma),
-                        longitude.round(decimals = heightNumberAfterComma)
+                        latitude.round(decimals = widthNumberAfterComma), longitude.round(decimals = heightNumberAfterComma)
                     ), width = POLYGON_WIDTH, height = POLYGON_HEIGHT
                 )
                 if (!polygonParams.contains(polygonParam.topLeftLatLng)) {
+                    val polygonOptions = getStandardPolygonOptions(polygonParam.topLeftLatLng)
+
                     polygonParam.polygonOptions = PolygonOptions().apply {
                         addAll(createPolygon(polygonParam))
                         clickable(true)
-                        fillColor(STANDARD_POLYGON_OPTIONS.fillColor)
-                        strokeColor(STANDARD_POLYGON_OPTIONS.strokeColor)
-                        strokePattern(STANDARD_POLYGON_OPTIONS.strokePattern)
-                        strokeWidth(STANDARD_POLYGON_OPTIONS.strokeWidth)
-                        zIndex(STANDARD_POLYGON_OPTIONS.zIndex)
+                        fillColor(polygonOptions.fillColor)
+                        strokeColor(polygonOptions.strokeColor)
+                        strokePattern(polygonOptions.strokePattern)
+                        strokeWidth(polygonOptions.strokeWidth)
+                        zIndex(polygonOptions.zIndex)
                     }
-                    polygonsForDrawing.add(polygonParam)
+                    polygonParam.minSideLength = getPolygonMinSide(polygonParam.polygonOptions.points)
+                    if (polygonOptions == STANDARD_EVEN_POLYGON_OPTIONS) {
+                        polygonsForDrawing.addFirst(polygonParam)
+                    } else {
+                        polygonsForDrawing.addLast(polygonParam)
+                    }
                 }
             }
         }
 
-        for (index in 0 until polygonsForDrawing.size step 2) {
+        for (polygonParam in polygonsForDrawing) {
             withContext(Dispatchers.Main) {
-                val polygonParam = polygonsForDrawing[index]
                 _polygonParamsFlow.emit(polygonParam)
-                polygonParams.add(polygonParam.topLeftLatLng)
-                val pair = Pair(polygonParam.topLeftLatLng.latitude, polygonParam.topLeftLatLng.longitude)
-                polygonParamsMap[pair] = polygonParam
             }
+            polygonParams.add(polygonParam.topLeftLatLng)
+            polygonParamsMap[polygonParam.topLeftLatLng] = polygonParam
         }
-        for (index in 1 until polygonsForDrawing.size step 2) {
-            withContext(Dispatchers.Main) {
-                val polygonParam = polygonsForDrawing[index]
-                _polygonParamsFlow.emit(polygonParam)
-                polygonParams.add(polygonParam.topLeftLatLng)
-                val pair = Pair(polygonParam.topLeftLatLng.latitude, polygonParam.topLeftLatLng.longitude)
-                polygonParamsMap[pair] = polygonParam
+    }
+
+    private fun getPolygonMinSide(points: List<LatLng>): Float {
+
+        var minDistance = Float.MAX_VALUE
+
+        var previousPoint: LatLng? = null
+        for (currentPoint in points) {
+
+            if (previousPoint == null) {
+                previousPoint = points.last()
             }
+
+            val results = FloatArray(1)
+            Location.distanceBetween(
+                previousPoint.latitude, previousPoint.longitude,
+                currentPoint.latitude, currentPoint.longitude,
+                results
+            )
+            minDistance = min(minDistance, results[0])
+
+            previousPoint = currentPoint
         }
+
+        return minDistance
+    }
+
+    private fun getStandardPolygonOptions(latLng: LatLng): PolygonOptions {
+        return if (isEvenCoordinates(latLng)) {
+            STANDARD_EVEN_POLYGON_OPTIONS
+        } else {
+            STANDARD_ODD_POLYGON_OPTIONS
+        }
+    }
+
+    private fun isEvenCoordinates(latLng: LatLng): Boolean {
+        val widthNumberAfterComma = getNumberOfSymbolsAfterComma(POLYGON_WIDTH + POLYGON_HEIGHT)
+        val multiplier = 10f.pow(widthNumberAfterComma)
+        val summedCoordinates = latLng.latitude * multiplier + latLng.longitude * multiplier
+        val isEven = summedCoordinates.toInt() % 2 == 0
+        return isEven
     }
 
     private fun Double.round(decimals: Int = 2): Double {
@@ -232,40 +272,91 @@ class MapViewModel: ViewModel() {
         val topLeftDistinctLatitude = (newLocation.latitude + POLYGON_HEIGHT).floor(decimals = heightNumberAfterComma)
         val topLeftDistinctLongitude = newLocation.longitude.floor(decimals = widthNumberAfterComma)
 
-        val polygonParam = polygonParamsMap[Pair(topLeftDistinctLatitude, topLeftDistinctLongitude)]
-        if (polygonParam == null) {
-            Log.d("mLog", "")
-        }
-        Log.d("mLog", "polygonParam: ${polygonParam?.topLeftLatLng}")
-        if (polygonParam != null && capturingPolygonParams != polygonParam) {
-            capturingPolygonParams?.let {
-                it.polygonOptions = STANDARD_POLYGON_OPTIONS
-                polygonParam.isCapturing = false
-                _polygonParamsFlow.emit(it)
+        val polygonParam = polygonParamsMap[LatLng(topLeftDistinctLatitude, topLeftDistinctLongitude)]
+        if (polygonParam != null) {
+            if (capturingPolygonParams != polygonParam && !polygonParam.isCaptured) {
+
+                // Draw capturing distinct
+                capturingPolygonParams?.let {
+                    it.isCapturing = false
+                    it.polygonOptions = getStandardPolygonOptions(it.topLeftLatLng)
+                    _polygonParamsFlow.emit(it)
+                }
+
+                capturingPolygonParams = polygonParam
+                polygonParam.isCapturing = true
+                polygonParam.isSelected = false
+                polygonParam.polygonOptions = CAPTURING_POLYGON_OPTIONS
+                _polygonParamsFlow.emit(polygonParam)
+
+                // Calculate capturing distance
+                capturingUserPathPoints.clear()
+
+            } else {
+
+                // Calculate capturing distance
             }
 
-            capturingPolygonParams = polygonParam
-            polygonParam.polygonOptions = CAPTURING_POLYGON_OPTIONS
-            polygonParam.isCapturing = true
-            _polygonParamsFlow.emit(polygonParam)
+            capturingUserPathPoints.add(myLocationLatLng)
+            val distance = calculateCapturingPathDistance(capturingUserPathPoints)
+            val progress = (distance / polygonParam.minSideLength * 100).toInt().coerceAtMost(100)
+
+            if (progress == 100) {
+                capturingPolygonParams?.let {
+                    it.isCapturing = false
+                    it.isCaptured = true
+                    it.polygonOptions = CAPTURED_POLYGON_OPTIONS
+                    capturingPolygonParams = null
+                    _polygonParamsFlow.emit(it)
+                }
+            }
+            Log.d("mLog", "progress: $progress")
         }
 
         lastLocation = newLocation
     }
 
+    private fun calculateCapturingPathDistance(capturingUserPathPoints: List<LatLng>): Float {
+
+        var totalLength = 0f
+
+        var previousPoint: LatLng? = null
+        for (currentPoint in capturingUserPathPoints) {
+
+            if (previousPoint == null) {
+                previousPoint = currentPoint
+                continue
+            }
+
+            val results = FloatArray(1)
+            Location.distanceBetween(
+                previousPoint.latitude, previousPoint.longitude,
+                currentPoint.latitude, currentPoint.longitude,
+                results
+            )
+            previousPoint = currentPoint
+            totalLength += results[0]
+        }
+
+        return totalLength
+    }
+
     fun myLocationMockMover() {
         viewModelScope.launch(Dispatchers.IO) {
+            val r = 0.003
+            val centerX = lastLocation?.longitude ?: 0.0
+            val centerY = lastLocation?.latitude ?: 0.0
             for (iteration in 1..10000) {
                 if (lastLocation != null && myLocationMarker != null) {
                     val nextLocation = Location("")
-                    nextLocation.latitude = lastLocation!!.latitude + 0.00001
-                    nextLocation.longitude = lastLocation!!.longitude + 0.00001
+                    nextLocation.longitude = centerX + 1.75 * r * cos(iteration / 100.0)
+                    nextLocation.latitude = centerY + r * sin(iteration / 100.0)
 
                     withContext(Dispatchers.Main) {
-                        updateLocationMarker(lastLocation!!, myLocationMarker!!)
+                        updateLocationMarker(nextLocation, myLocationMarker!!)
                     }
-                    lastLocation = nextLocation
-                    delay(50)
+
+                    delay(200)
                 }
             }
         }
