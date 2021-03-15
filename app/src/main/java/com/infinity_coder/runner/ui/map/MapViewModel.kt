@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import java.util.*
+import kotlin.Comparator
 import kotlin.collections.HashMap
 import kotlin.math.max
 import kotlin.math.min
@@ -22,14 +23,37 @@ class MapViewModel: ViewModel() {
         private const val POLYGON_HEIGHT = 0.001
         private const val POLYGON_WIDTH = 0.001
 
-        private const val DESELECTED_POLYGON_FILL_COLOR = Color.TRANSPARENT
-        private val DESELECTED_POLYGON_STROKE_COLOR = Color.parseColor("#B1BEC5")
-        private val SELECTED_POLYGON_FILL_COLOR = Color.parseColor("#0FFE612C")
-        private val SELECTED_POLYGON_STROKE_COLOR = Color.parseColor("#FE612C")
-        private val CAPTURING_POLYGON_FILL_COLOR = Color.parseColor("#0F000000")
-        private val CAPTURING_POLYGON_STROKE_COLOR = Color.parseColor("#000000")
         private val SOLID_STROKE_PATTERN = null
         private val DASHED_STROKE_PATTERN = listOf(Dash(25f), Gap(50f))
+
+        private val STANDARD_POLYGON_OPTIONS = PolygonOptions().apply {
+            fillColor(Color.TRANSPARENT)
+            strokeColor(Color.parseColor("#B1BEC5"))
+            strokePattern(DASHED_STROKE_PATTERN)
+            strokeWidth(4f)
+            zIndex(0f)
+        }
+        private val CAPTURED_POLYGON_OPTIONS = PolygonOptions().apply {
+            fillColor(Color.parseColor("#0FFE612C"))
+            strokeColor(Color.parseColor("#FE612C"))
+            strokePattern(SOLID_STROKE_PATTERN)
+            strokeWidth(4f)
+            zIndex(1f)
+        }
+        private val CAPTURING_POLYGON_OPTIONS = PolygonOptions().apply {
+            fillColor(Color.parseColor("#0F000000"))
+            strokeColor(Color.parseColor("#000000"))
+            strokePattern(SOLID_STROKE_PATTERN)
+            strokeWidth(4f)
+            zIndex(1f)
+        }
+        private val SELECTED_POLYGON_OPTIONS = PolygonOptions().apply {
+            fillColor(Color.parseColor("#0FFE612C"))
+            strokeColor(Color.parseColor("#FE612C"))
+            strokePattern(DASHED_STROKE_PATTERN)
+            strokeWidth(4f)
+            zIndex(1f)
+        }
     }
 
     private val _polygonParamsFlow = MutableSharedFlow<PolygonParams>()
@@ -57,21 +81,34 @@ class MapViewModel: ViewModel() {
         }
     }
 
-    fun onPolygonClicked(polygon: Polygon) {
-        if (polygon.fillColor == CAPTURING_POLYGON_FILL_COLOR) return
+    fun onPolygonClicked(polygon: Polygon) = viewModelScope.launch {
 
-        if (polygon.fillColor == DESELECTED_POLYGON_FILL_COLOR) {
-            polygon.fillColor = SELECTED_POLYGON_FILL_COLOR
-            polygon.strokeColor = SELECTED_POLYGON_STROKE_COLOR
-            polygon.strokePattern = SOLID_STROKE_PATTERN
-            polygon.strokeWidth = 5f
-            polygon.zIndex = 1f
-        } else {
-            polygon.fillColor = DESELECTED_POLYGON_FILL_COLOR
-            polygon.strokeColor = DESELECTED_POLYGON_STROKE_COLOR
-            polygon.strokePattern = DASHED_STROKE_PATTERN
-            polygon.strokeWidth = 3f
-            polygon.zIndex = 0f
+        val topLeftPoint = polygon.points.sortedWith(providePolygonPointsComparator()).first()
+        val polygonParam = polygonParamsMap[Pair(topLeftPoint.latitude, topLeftPoint.longitude)]
+
+        if (polygonParam != null) {
+            polygonParam.isSelected = !polygonParam.isSelected
+            when {
+                polygonParam.isSelected -> {
+                    polygonParam.polygonOptions = SELECTED_POLYGON_OPTIONS
+                }
+                !polygonParam.isSelected && polygonParam.isCapturing -> {
+                    polygonParam.polygonOptions = CAPTURING_POLYGON_OPTIONS
+                }
+                !polygonParam.isSelected && !polygonParam.isCapturing -> {
+                    polygonParam.polygonOptions = STANDARD_POLYGON_OPTIONS
+                }
+            }
+            _polygonParamsFlow.emit(polygonParam)
+        }
+    }
+
+    private fun providePolygonPointsComparator(): Comparator<LatLng> {
+        return Comparator { latLngLeft: LatLng, latLngRight: LatLng ->
+            if (latLngLeft.latitude == latLngRight.latitude) {
+                return@Comparator latLngLeft.longitude.compareTo(latLngRight.longitude)
+            }
+            return@Comparator -latLngLeft.latitude.compareTo(latLngRight.latitude)
         }
     }
 
@@ -106,15 +143,15 @@ class MapViewModel: ViewModel() {
                     ), width = POLYGON_WIDTH, height = POLYGON_HEIGHT
                 )
                 if (!polygonParams.contains(polygonParam.topLeftLatLng)) {
-                    val polygonOptions = PolygonOptions().apply {
+                    polygonParam.polygonOptions = PolygonOptions().apply {
                         addAll(createPolygon(polygonParam))
-                        fillColor(DESELECTED_POLYGON_FILL_COLOR)
-                        strokeColor(DESELECTED_POLYGON_STROKE_COLOR)
-                        strokePattern(DASHED_STROKE_PATTERN)
-                        strokeWidth(3f)
                         clickable(true)
+                        fillColor(STANDARD_POLYGON_OPTIONS.fillColor)
+                        strokeColor(STANDARD_POLYGON_OPTIONS.strokeColor)
+                        strokePattern(STANDARD_POLYGON_OPTIONS.strokePattern)
+                        strokeWidth(STANDARD_POLYGON_OPTIONS.strokeWidth)
+                        zIndex(STANDARD_POLYGON_OPTIONS.zIndex)
                     }
-                    polygonParam.polygonOptions = polygonOptions
                     polygonsForDrawing.add(polygonParam)
                 }
             }
@@ -146,7 +183,8 @@ class MapViewModel: ViewModel() {
 
     private fun Double.floor(decimals: Int): Double {
         val multiplier = 10f.pow(decimals)
-        return (this * multiplier).toInt().toDouble() / multiplier
+        val resultWithCollisions = (this * multiplier).toInt().toDouble() / multiplier
+        return resultWithCollisions.round(decimals)
     }
 
     private fun getNumberOfSymbolsAfterComma(number: Double): Int {
@@ -191,26 +229,24 @@ class MapViewModel: ViewModel() {
         val widthNumberAfterComma = getNumberOfSymbolsAfterComma(POLYGON_WIDTH)
         val heightNumberAfterComma = getNumberOfSymbolsAfterComma(POLYGON_HEIGHT)
 
-        val topLeftDistinctLatitude = newLocation.latitude.floor(decimals = heightNumberAfterComma) + POLYGON_HEIGHT
+        val topLeftDistinctLatitude = (newLocation.latitude + POLYGON_HEIGHT).floor(decimals = heightNumberAfterComma)
         val topLeftDistinctLongitude = newLocation.longitude.floor(decimals = widthNumberAfterComma)
 
         val polygonParam = polygonParamsMap[Pair(topLeftDistinctLatitude, topLeftDistinctLongitude)]
+        if (polygonParam == null) {
+            Log.d("mLog", "")
+        }
+        Log.d("mLog", "polygonParam: ${polygonParam?.topLeftLatLng}")
         if (polygonParam != null && capturingPolygonParams != polygonParam) {
             capturingPolygonParams?.let {
-                it.polygonOptions.fillColor(DESELECTED_POLYGON_FILL_COLOR)
-                it.polygonOptions.strokeColor(DESELECTED_POLYGON_STROKE_COLOR)
-                it.polygonOptions.strokePattern(DASHED_STROKE_PATTERN)
-                it.polygonOptions.strokeWidth(3f)
-                it.polygonOptions.zIndex(0f)
+                it.polygonOptions = STANDARD_POLYGON_OPTIONS
+                polygonParam.isCapturing = false
                 _polygonParamsFlow.emit(it)
             }
 
             capturingPolygonParams = polygonParam
-            polygonParam.polygonOptions.fillColor(CAPTURING_POLYGON_FILL_COLOR)
-            polygonParam.polygonOptions.strokeColor(CAPTURING_POLYGON_STROKE_COLOR)
-            polygonParam.polygonOptions.strokePattern(SOLID_STROKE_PATTERN)
-            polygonParam.polygonOptions.strokeWidth(5f)
-            polygonParam.polygonOptions.zIndex(1f)
+            polygonParam.polygonOptions = CAPTURING_POLYGON_OPTIONS
+            polygonParam.isCapturing = true
             _polygonParamsFlow.emit(polygonParam)
         }
 
@@ -229,7 +265,7 @@ class MapViewModel: ViewModel() {
                         updateLocationMarker(lastLocation!!, myLocationMarker!!)
                     }
                     lastLocation = nextLocation
-                    delay(10)
+                    delay(50)
                 }
             }
         }

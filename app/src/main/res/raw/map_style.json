@@ -1,0 +1,16 @@
+[
+  {
+    "featureType": "poi",
+    "elementType": "labels.icon",
+    "stylers": [
+      { "visibility": "off" }
+    ]
+  },
+  {
+    "featureType": "transit",
+    "elementType": "all",
+    "stylers": [
+      { "visibility": "off" }
+    ]
+  }
+]

@@ -16,14 +16,17 @@
         app:layout_constraintTop_toTopOf="parent"
         tools:context=".ui.MainActivity" />
 
-    <Button
-        android:id="@+id/permissionsButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+    <ImageButton
+        android:id="@+id/findMyLocationButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="16dp"
         android:layout_marginBottom="24dp"
-        android:text="Permissions"
+        android:background="@drawable/bg_button_circle"
+        android:contentDescription="Find my location"
+        android:elevation="8dp"
+        android:src="@drawable/ic_find_my_location"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

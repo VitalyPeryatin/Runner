@@ -2,12 +2,14 @@ package com.infinity_coder.runner.ui.map
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.location.Location
 import android.os.Bundle
 import android.os.Looper
+import android.util.Log
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
@@ -66,7 +68,7 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
             onMapReady(googleMap)
         }
 
-        permissionsButton.setOnClickListener {
+        findMyLocationButton.setOnClickListener {
             determineLocationIfHasPermissions()
         }
 
@@ -101,6 +103,7 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
             isTrafficEnabled = false
         }
 
+        applyMapStyles()
         launchDrawDistrictsJob()
         determineLocationIfHasPermissions()
         drawGroundOverlays()
@@ -114,16 +117,23 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
         map.setOnPolygonClickListener(viewModel::onPolygonClicked)
     }
 
+    private fun applyMapStyles() {
+        try {
+            map.setMapStyle(
+                MapStyleOptions.loadRawResourceStyle(context, R.raw.map_style)
+            )
+            Log.d("mLogStyle", "style: success")
+        } catch (e: Resources.NotFoundException) {
+            Log.d("mLogStyle", "style: error")
+        }
+    }
+
     private fun drawGroundOverlays() {
-        val mockImage = BitmapDescriptorFactory.fromResource(R.drawable.building)
+        val mockImage = BitmapDescriptorFactory.fromResource(R.drawable.avatar1)
         val mockGroundOverlayLocation = LatLng(55.6388593, 37.6704059)
         map.addGroundOverlay(
-            GroundOverlayOptions()
-                .image(mockImage).anchor(0f, 0f)
-                .zIndex(2f)
-                .position(mockGroundOverlayLocation, 80f, 80f)
-                .transparency(0.1f)
-                .clickable(true)
+            GroundOverlayOptions().image(mockImage).anchor(0f, 0f).zIndex(2f)
+                .position(mockGroundOverlayLocation, 80f, 80f).transparency(0.1f).clickable(true)
         )
     }
 
@@ -172,10 +182,7 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
 
     private fun createNewLocationMarker(): Marker {
         return map.addMarker(
-            MarkerOptions()
-                .flat(true)
-                .anchor(0.5f, 0.5f)
-                .position(LatLng(90.0, 0.0))
+            MarkerOptions().flat(true).anchor(0.5f, 0.5f).position(LatLng(90.0, 0.0))
                 .icon(BitmapDescriptorFactory.fromBitmap(createScaledLocationIcon(100, 100)))
         )
     }
@@ -193,18 +200,13 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
     private fun determineLocationIfHasPermissions() {
         if (!::map.isInitialized) return
 
-        checkPermission(
-            permission = Manifest.permission.ACCESS_FINE_LOCATION,
-            onGranted = {
-                determineLocation()
-            },
-            onShowRational = {
-                showRationaleLocationDialog()
-            },
-            onDenied = {
-                requestPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-        )
+        checkPermission(permission = Manifest.permission.ACCESS_FINE_LOCATION, onGranted = {
+            determineLocation()
+        }, onShowRational = {
+            showRationaleLocationDialog()
+        }, onDenied = {
+            requestPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        })
     }
 
     @SuppressLint("MissingPermission")
@@ -227,6 +229,7 @@ class MapFragment: Fragment(R.layout.fragment_map), OnPermissionRationaleListene
                             .width(10f)
                             .startCap(RoundCap())
                             .endCap(RoundCap())
+                            .zIndex(2f)
                             .add(LatLng(lastKnownLocation.latitude, lastKnownLocation.longitude))
                     )
 

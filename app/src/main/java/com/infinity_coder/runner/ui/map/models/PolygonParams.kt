@@ -7,5 +7,7 @@ data class PolygonParams(
     val topLeftLatLng: LatLng,
     val width: Double,
     val height: Double,
-    var polygonOptions: PolygonOptions = PolygonOptions()
+    var polygonOptions: PolygonOptions = PolygonOptions(),
+    var isSelected: Boolean = false,
+    var isCapturing: Boolean = false
 )
